@@ -1,0 +1,19 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+stages:
+  - build
+
+release-pypi:
+  # 以开发镜像作为执行环境
+  image: registry.tsingroc.com/general/dev:latest
+  stage: build
+  only:
+    - master
+  script:
+    - pip3 install pybind11 build -U
+    - python3 -m build -n
+    - |
+      TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token \
+      python3 -m twine upload --repository-url \
+      ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
