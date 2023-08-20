@@ -424,6 +424,111 @@ std::pair<std::vector<int>, std::vector<double>> get_bin_out_fast_with_result(
 }
 }; // namespace Type3
 
+namespace Type4 {
+// 额外记录每个item的位置
+
+struct Shelf {
+  int id;
+  int w, h;
+  int x, y;
+};
+
+struct Slot {
+  int id;
+  int h;
+  int x, y;
+};
+
+bool try_slot(std::vector<std::tuple<int, int, int>> &item2bins,
+              std::unordered_map<int, std::vector<Slot>> &slots, int w, int h) {
+  for (auto &s : slots[w]) {
+    if (h <= s.h) {
+      s.h -= h;
+      item2bins.push_back({s.id, s.x, s.y});
+      s.y += h;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool try_shelf(std::vector<std::tuple<int, int, int>> &item2bins,
+               std::vector<Shelf> &shelves,
+               std::unordered_map<int, std::vector<Slot>> &slots, int min_l,
+               int w, int h) {
+  std::pair<int, int> best_m = {-INFINITY, -INFINITY};
+  Shelf *best_s = nullptr;
+  for (auto &s : shelves) {
+    if (h <= s.h) {
+      auto w_ = s.w - w;
+      if (w_ >= 0) {
+        std::pair<int, int> m = {w_ * s.h, w_};
+        if (m > best_m) {
+          best_m = m;
+          best_s = &s;
+        }
+      }
+    }
+  }
+  if (!best_s) {
+    return false;
+  }
+  item2bins.push_back({best_s->id, best_s->x, best_s->y});
+  best_s->w = best_m.second;
+  auto h_ = best_s->h - h;
+  if (h_ >= min_l && w >= min_l) {
+    slots[w].push_back(
+        {.id = best_s->id, .h = h_, .x = best_s->x, .y = best_s->y + h});
+  }
+  best_s->x += w;
+  return true;
+}
+
+std::vector<std::tuple<int, int, int>> get_bin_out_fast_with_result(
+    py::array_t<int, py::array::c_style | py::array::forcecast> _items,
+    bool rotatable, int bin_width, int bin_height) {
+  auto items = _items.unchecked<2>();
+  auto n = items.shape(0);
+  auto last = INFINITY;
+  std::vector<int> min_ls(n);
+  for (auto i = n - 1; i >= 0; --i) {
+    min_ls.at(i) = last;
+    last = min(last, min(items(i, 0), items(i, 1)));
+  }
+  std::vector<int> bin_hs;
+  std::vector<Shelf> shelves;
+  std::unordered_map<int, std::vector<Slot>> slots;
+  std::vector<std::tuple<int, int, int>> item2bins;
+  item2bins.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    auto w = items(i, 0);
+    auto h = items(i, 1);
+    auto min_l = min_ls.at(i);
+    if (try_slot(item2bins, slots, w, h) ||
+        (rotatable && try_slot(item2bins, slots, h, w))) {
+      continue;
+    }
+    if (try_shelf(item2bins, shelves, slots, min_l, w, h) ||
+        (rotatable && try_shelf(item2bins, shelves, slots, min_l, h, w))) {
+      continue;
+    }
+    int b_id = 0, size = bin_hs.size();
+    for (; b_id < size; ++b_id) {
+      if (h <= bin_hs.at(b_id)) {
+        bin_hs.at(b_id) -= h;
+        break;
+      }
+    }
+    if (b_id == size) {
+      bin_hs.push_back(bin_height - h);
+    }
+    auto y = bin_height - bin_hs.at(b_id) - h;
+    shelves.push_back({.id = b_id, .w = bin_width - w, .h = h, .x = w, .y = y});
+    item2bins.push_back({b_id, 0, y});
+  }
+  return item2bins;
+}
+}; // namespace Type4
 namespace bp_mr {
 struct Rect {
   double x, y, w, h;
@@ -606,6 +711,21 @@ PYBIND11_MODULE(pybp, m) {
         bin_height: float, height of the bins
 
         return: (bin_id of each item, usage of each bin)
+        )pbdoc",
+        "items"_a, "rotatable"_a, "bin_width"_a = 2440, "bin_height"_a = 1220);
+  m.def("get_bin_out_fast_5", Type4::get_bin_out_fast_with_result,
+        R"pbdoc(
+        Do bin-packing algorithm on the given input
+
+        items: float np.array, Nx2
+
+        rotatable: bool, whether the items are rotatable
+
+        bin_width: float, width of the bins
+
+        bin_height: float, height of the bins
+
+        return: position of each item, (bin, x, y)
         )pbdoc",
         "items"_a, "rotatable"_a, "bin_width"_a = 2440, "bin_height"_a = 1220);
   m.def("bp_max_rect", bp_mr::bp_max_rect,
